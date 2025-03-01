@@ -1,0 +1,455 @@
+<script>
+// Variables globales
+let calendario;
+let reservaIdSeleccionada = null;
+let reservas = [];
+
+// Cuando el documento esté listo
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('Inicializando aplicación...');
+  
+  // Inicializar calendario
+  inicializarCalendario();
+  
+  // Configurar eventos de botones
+  document.getElementById('btnReservar').addEventListener('click', manejarReserva);
+  document.getElementById('btnFiltrar').addEventListener('click', aplicarFiltros);
+  document.getElementById('btnEliminarReserva').addEventListener('click', eliminarReservaSeleccionada);
+  
+  // Cargar reservas
+  cargarReservas();
+  
+  // Mostrar mensaje de bienvenida
+  mostrarMensaje('Sistema inicializado correctamente', 'info');
+});
+
+// Manejar click en reservar
+function manejarReserva() {
+  // Validación básica del formulario
+  const salaSeleccionada = document.getElementById('salaSeleccionada').value;
+  const fecha = document.getElementById('fecha').value;
+  const horaInicial = document.getElementById('horaInicial').value;
+  const horaFinal = document.getElementById('horaFinal').value;
+  const area = document.getElementById('area').value;
+  const personasReunion = document.getElementById('personasReunion').value;
+  
+  // Verificar campos obligatorios
+  if (!salaSeleccionada || !fecha || !horaInicial || !horaFinal || !area) {
+    mostrarMensaje('Por favor completa todos los campos requeridos', 'danger');
+    return;
+  }
+  
+  // Verificar horario
+  if (horaInicial >= horaFinal) {
+    mostrarMensaje('La hora final debe ser posterior a la hora inicial', 'warning');
+    return;
+  }
+  
+  // Preparar datos
+  const reservaData = {
+    salaSeleccionada: salaSeleccionada,
+    fecha: fecha,
+    horaInicial: horaInicial,
+    horaFinal: horaFinal,
+    area: area,
+    personasReunion: parseInt(personasReunion) || 1
+  };
+  
+  // Mostrar que estamos procesando
+  mostrarMensaje('Procesando reserva...', 'info');
+  mostrarLoading(true);
+  
+  // Imprimir datos para depuración
+  console.log('Enviando datos de reserva:', JSON.stringify(reservaData));
+  
+  // Enviar al servidor
+  google.script.run
+    .withSuccessHandler(function(result) {
+      mostrarLoading(false);
+      console.log('Respuesta del servidor:', result);
+      
+      if (result && result.success) {
+        mostrarMensaje('✅ Reserva guardada con éxito', 'success');
+        document.getElementById('formularioReserva').reset();
+        cargarReservas(); // Recargar las reservas
+      } else {
+        const mensaje = result ? result.message : 'Error desconocido';
+        mostrarMensaje('❌ Error: ' + mensaje, 'danger');
+      }
+    })
+    .withFailureHandler(function(error) {
+      mostrarLoading(false);
+      console.error('Error en la solicitud:', error);
+      mostrarMensaje('❌ Error en la comunicación con el servidor', 'danger');
+    })
+    .guardarReserva(reservaData);
+}
+
+// Inicializar el calendario
+function inicializarCalendario() {
+  try {
+    const calendarEl = document.getElementById('calendario');
+    
+    calendario = new FullCalendar.Calendar(calendarEl, {
+      initialView: 'dayGridMonth',
+      headerToolbar: {
+        left: 'prev,next today',
+        center: 'title',
+        right: 'dayGridMonth,timeGridWeek,timeGridDay'
+      },
+      locale: 'es',
+      timeZone: 'local',
+      selectable: true,
+      selectMirror: true,
+      navLinks: true,
+      dayMaxEvents: true,
+      businessHours: {
+        daysOfWeek: [1, 2, 3, 4, 5],
+        startTime: '08:00',
+        endTime: '18:00',
+      },
+      eventTimeFormat: {
+        hour: '2-digit',
+        minute: '2-digit',
+        meridiem: false
+      },
+      eventClick: function(info) {
+        mostrarDetallesReserva(info.event);
+      },
+      select: function(info) {
+        // Pre-llenar el formulario con la fecha seleccionada
+        document.getElementById('fecha').value = info.startStr.split('T')[0];
+      }
+    });
+    
+    calendario.render();
+    console.log('Calendario inicializado');
+  } catch (error) {
+    console.error('Error al inicializar calendario:', error);
+    mostrarMensaje('Error al inicializar el calendario', 'danger');
+  }
+}
+
+// Cargar reservas desde el servidor con mejor manejo de errores
+function cargarReservas() {
+  console.log('Cargando reservas...');
+  mostrarLoading(true);
+  
+  // Mostrar mensaje de carga al usuario
+  mostrarMensaje('Cargando reservas...', 'info');
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      mostrarLoading(false);
+      console.log('Resultado de cargar reservas:', result);
+      
+      if (result && result.success === true) {
+        reservas = result.reservas || [];
+        
+        // Hacer log detallado de las reservas recibidas
+        console.log(`Se recibieron ${reservas.length} reservas:`);
+        if (reservas.length > 0) {
+          console.log('Primera reserva:', reservas[0]);
+          
+          // Verificar formato de fechas
+          if (reservas[0].FECHA) {
+            console.log('Formato de FECHA en primera reserva:', 
+                       typeof reservas[0].FECHA, 
+                       reservas[0].FECHA instanceof Date ? 'Es un objeto Date' : 'No es un objeto Date',
+                       reservas[0].FECHA);
+          }
+        }
+        
+        actualizarCalendario();
+        mostrarMensaje(`Se cargaron ${reservas.length} reservas`, 'success');
+      } else {
+        console.error('Error al cargar reservas:', result);
+        const mensaje = result && result.message ? result.message : 'No se pudieron cargar las reservas';
+        const sugerencia = result && result.suggestion ? ` (${result.suggestion})` : '';
+        mostrarMensaje(`No se pudieron cargar las reservas: ${mensaje}${sugerencia}`, 'warning');
+        
+        // Intentar actualizar el calendario aunque sea con datos vacíos
+        reservas = [];
+        actualizarCalendario();
+      }
+    })
+    .withFailureHandler(function(error) {
+      mostrarLoading(false);
+      console.error('Error al cargar reservas:', error);
+      mostrarMensaje('Error al cargar las reservas: ' + error.toString(), 'danger');
+      
+      // Para depuración
+      if (typeof error === 'object') {
+        for (const key in error) {
+          console.error(`- ${key}: ${error[key]}`);
+        }
+      }
+    })
+    .getReservas();
+}
+
+// Actualizar eventos en el calendario con mejor manejo de fechas
+function actualizarCalendario() {
+  try {
+    // Limpiar eventos actuales
+    calendario.removeAllEvents();
+    
+    // Si no hay reservas, terminar
+    if (!reservas || reservas.length === 0) {
+      console.log('No hay reservas para mostrar');
+      return;
+    }
+    
+    // Filtros
+    const mostrarAmarilla = document.getElementById('filtroAmarilla').checked;
+    const mostrarMorada = document.getElementById('filtroMorada').checked;
+    
+    console.log('Filtros aplicados:', { amarilla: mostrarAmarilla, morada: mostrarMorada });
+    console.log('Procesando', reservas.length, 'reservas para el calendario');
+    
+    // Procesar cada reserva
+    reservas.forEach(function(reserva) {
+      try {
+        // Aplicar filtros
+        if ((reserva.SALA_SELECCIONADA === 'Amarilla' && !mostrarAmarilla) ||
+            (reserva.SALA_SELECCIONADA === 'Morada' && !mostrarMorada)) {
+          return;
+        }
+        
+        // Preparar fechas con mejor manejo de errores
+        let fechaInicio, fechaFin;
+        
+        // Dentro de la función actualizarCalendario() en JavaScript.html, 
+// reemplaza la parte donde se crea la fecha base con esto:
+
+        // Crear fecha base segura
+        let fechaBase;
+        try {
+          // Si es un objeto Date o un string ISO
+          if (typeof reserva.FECHA === 'string' && reserva.FECHA.includes('T')) {
+            console.log('FECHA es un string ISO:', reserva.FECHA);
+            
+            // Crear un objeto Date a partir del string ISO
+            fechaBase = new Date(reserva.FECHA);
+            
+            // Importante: No ajustar la fecha, ya viene con el valor correcto
+            console.log('Fecha base creada desde ISO:', fechaBase);
+          } 
+          // Si ya es un objeto Date
+          else if (reserva.FECHA instanceof Date) {
+            fechaBase = reserva.FECHA;
+            console.log('FECHA es un objeto Date:', fechaBase);
+          } 
+          // Otros formatos
+          else {
+            console.log('FECHA es otro formato:', typeof reserva.FECHA, reserva.FECHA);
+            // Intentar convertir de forma general
+            fechaBase = new Date(String(reserva.FECHA));
+            
+            // Si es inválida, intentar extraer componentes
+            if (isNaN(fechaBase.getTime())) {
+              console.warn('Fecha inválida, intentando parseo manual');
+              
+              // Intentar varios formatos comunes
+              const strFecha = String(reserva.FECHA);
+              
+              // Formato DD/MM/YYYY
+              if (strFecha.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
+                const [dia, mes, anio] = strFecha.split('/').map(Number);
+                fechaBase = new Date(anio, mes - 1, dia); // Meses en JS son 0-based
+              }
+              // Formato YYYY-MM-DD
+              else if (strFecha.match(/^\d{4}-\d{2}-\d{2}$/)) {
+                const [anio, mes, dia] = strFecha.split('-').map(Number);
+                fechaBase = new Date(anio, mes - 1, dia);
+              }
+              // Si todo falla, usar fecha actual
+              else {
+                console.error('No se pudo interpretar la fecha:', strFecha);
+                fechaBase = new Date();
+              }
+            }
+          }
+        } catch (e) {
+          console.error('Error procesando fecha base:', e);
+          fechaBase = new Date(); // Fallback a hoy
+        }
+        
+        // Extraer horas y minutos de forma segura
+        let horaInicial = 8, minutoInicial = 0;
+        let horaFinal = 9, minutoFinal = 0;
+        
+        try {
+          if (reserva.HORA_INICIAL && reserva.HORA_INICIAL.includes(':')) {
+            [horaInicial, minutoInicial] = reserva.HORA_INICIAL.split(':').map(Number);
+          } else {
+            console.warn('Formato de hora inicial inválido:', reserva.HORA_INICIAL);
+          }
+          
+          if (reserva.HORA_FINAL && reserva.HORA_FINAL.includes(':')) {
+            [horaFinal, minutoFinal] = reserva.HORA_FINAL.split(':').map(Number);
+          } else {
+            console.warn('Formato de hora final inválido:', reserva.HORA_FINAL);
+          }
+        } catch (e) {
+          console.error('Error al procesar horas:', e);
+        }
+        
+        // Crear fechas completas
+        fechaInicio = new Date(fechaBase);
+        fechaInicio.setHours(horaInicial, minutoInicial, 0);
+        
+        fechaFin = new Date(fechaBase);
+        fechaFin.setHours(horaFinal, minutoFinal, 0);
+        
+        // Color según sala usando clases CSS
+        const colorClase = reserva.SALA_SELECCIONADA === 'Amarilla' ? 'sala-amarilla' : 'sala-morada';
+        const color = reserva.SALA_SELECCIONADA === 'Amarilla' ? '#f1c232' : '#9900ff';
+        
+        // Mostrar información de depuración
+        console.log('Añadiendo evento al calendario:', {
+          id: reserva.ID_REUNION,
+          title: `${reserva.SALA_SELECCIONADA} - ${reserva.AREA}`,
+          start: fechaInicio,
+          end: fechaFin,
+          color: color
+        });
+        
+        // Añadir evento
+        calendario.addEvent({
+          id: reserva.ID_REUNION,
+          title: `${reserva.SALA_SELECCIONADA} - ${reserva.AREA}`,
+          start: fechaInicio,
+          end: fechaFin,
+          backgroundColor: color,
+          borderColor: color,
+          classNames: [colorClase], // Usar clase CSS
+          extendedProps: reserva
+        });
+      } catch (e) {
+        console.error('Error al procesar reserva:', e, reserva);
+      }
+    });
+    
+    console.log('Calendario actualizado con éxito');
+  } catch (error) {
+    console.error('Error al actualizar calendario:', error);
+    mostrarMensaje('Error al actualizar el calendario', 'danger');
+  }
+}
+
+// Aplicar filtros al calendario
+function aplicarFiltros() {
+  actualizarCalendario();
+  mostrarMensaje('Filtros aplicados', 'info');
+}
+
+// Mostrar detalles de una reserva
+function mostrarDetallesReserva(evento) {
+  try {
+    // Guardar ID para posible eliminación
+    reservaIdSeleccionada = evento.id;
+    
+    // Propiedades extendidas contienen todos los datos
+    const reserva = evento.extendedProps;
+    
+    // Formatear fecha
+    let fechaStr = 'Fecha no disponible';
+    try {
+      const opciones = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+      
+      // Obtener fecha del evento (más confiable)
+      const eventDate = evento.start || new Date(reserva.FECHA);
+      fechaStr = eventDate.toLocaleDateString('es-ES', opciones);
+    } catch (e) {
+      console.error('Error al formatear fecha:', e);
+    }
+    
+    // Crear HTML para el detalle
+    const html = `
+      <div class="card mb-3" style="border-left: 5px solid ${evento.backgroundColor}">
+        <div class="card-body">
+          <h5 class="card-title">Sala ${reserva.SALA_SELECCIONADA}</h5>
+          <p><strong>Fecha:</strong> ${fechaStr}</p>
+          <p><strong>Horario:</strong> ${reserva.HORA_INICIAL} - ${reserva.HORA_FINAL}</p>
+          <p><strong>Área:</strong> ${reserva.AREA}</p>
+          <p><strong>Personas:</strong> ${reserva.PROMEDIO_DE_PERSONAS_EN_REUNION}</p>
+          <p><small class="text-muted">ID: ${reserva.ID_REUNION}</small></p>
+        </div>
+      </div>
+      <div class="alert alert-warning">
+        <i class="bi bi-exclamation-triangle"></i> ¿Seguro que deseas eliminar esta reserva? Esta acción no se puede deshacer.
+      </div>
+    `;
+    
+    // Mostrar en el modal
+    document.getElementById('detalleReservaBody').innerHTML = html;
+    
+    // Abrir modal
+    const modal = new bootstrap.Modal(document.getElementById('detalleReservaModal'));
+    modal.show();
+  } catch (error) {
+    console.error('Error al mostrar detalles:', error);
+    mostrarMensaje('Error al mostrar detalles de la reserva', 'danger');
+  }
+}
+
+// Eliminar reserva seleccionada
+function eliminarReservaSeleccionada() {
+  if (!reservaIdSeleccionada) {
+    mostrarMensaje('No hay reserva seleccionada', 'warning');
+    return;
+  }
+  
+  mostrarLoading(true);
+  console.log('Eliminando reserva:', reservaIdSeleccionada);
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      mostrarLoading(false);
+      
+      // Cerrar el modal
+      const modal = bootstrap.Modal.getInstance(document.getElementById('detalleReservaModal'));
+      if (modal) modal.hide();
+      
+      if (result && result.success) {
+        mostrarMensaje('Reserva eliminada con éxito', 'success');
+        cargarReservas(); // Recargar reservas
+      } else {
+        mostrarMensaje('Error al eliminar: ' + (result ? result.message : 'Error desconocido'), 'danger');
+      }
+    })
+    .withFailureHandler(function(error) {
+      mostrarLoading(false);
+      console.error('Error al eliminar:', error);
+      mostrarMensaje('Error al comunicarse con el servidor', 'danger');
+    })
+    .eliminarReserva(reservaIdSeleccionada);
+}
+
+// Mostrar mensaje en la interfaz
+function mostrarMensaje(mensaje, tipo) {
+  const contenedor = document.getElementById('mensajesSistema');
+  
+  // Crear elemento de alerta
+  const alertaElement = document.createElement('div');
+  alertaElement.className = `alert alert-${tipo} alert-dismissible fade show`;
+  alertaElement.innerHTML = `
+    ${mensaje}
+    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+  `;
+  
+  // Añadir al contenedor
+  contenedor.appendChild(alertaElement);
+  
+  // Auto-eliminar después de 8 segundos
+  setTimeout(function() {
+    alertaElement.remove();
+  }, 8000);
+}
+
+// Mostrar/ocultar indicador de carga
+function mostrarLoading(mostrar) {
+  document.getElementById('loadingOverlay').style.display = mostrar ? 'block' : 'none';
+}
+</script>
