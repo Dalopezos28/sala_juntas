@@ -143,7 +143,7 @@ function doGet() {
   try {
     Logger.log('Iniciando doGet - Cargando aplicación web');
     
-    return HtmlService.createTemplateFromFile('Index')
+    return HtmlService.createTemplateFromFile('index')
       .evaluate()
       .setTitle('Reserva de Salas de Reunión')
       .addMetaTag('viewport', 'width=device-width, initial-scale=1')
